@@ -84,8 +84,8 @@ export async function update(id, { published, content, ...data }) {
       data: {
         ...data,
         content: sanitizeHtml(content, sanitizeOptions),
-        // Artikel yang sudah terbit lalu diedit tetap pakai tanggal terbit pertamanya
-        publishedAt: published ? (old.publishedAt ?? new Date()) : null,
+        // published tidak dikirim → tidak berubah. Artikel yang sudah terbit tetap pakai tanggal terbit pertamanya.
+        publishedAt: published === undefined ? undefined : published ? (old.publishedAt ?? new Date()) : null,
       },
       include,
     })

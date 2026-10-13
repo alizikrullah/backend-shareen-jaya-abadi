@@ -23,7 +23,8 @@ const productFields = {
 
 // Saat dibuat, produk wajib punya minimal satu warna. Setelah itu warna diatur lewat endpoint warna.
 const createProductSchema = z.object({ ...productFields, colors: z.array(colorSchema).min(1, 'Minimal satu warna') })
-const updateProductSchema = z.object(productFields)
+// Saat edit, imageUrls wajib dikirim — kalau dibiarkan default [], semua foto produk ikut terhapus
+const updateProductSchema = z.object({ ...productFields, imageUrls: z.array(directusImageUrl).max(10, 'Maksimal 10 foto') })
 
 export const productsRoutes = Router()
   .get('/products', productsController.list)

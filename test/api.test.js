@@ -54,6 +54,12 @@ test('endpoint admin menolak tamu dan user biasa', async () => {
   assert.equal((await api('/categories', { method: 'POST', body: { name: `X ${run}` } })).status, 401)
   assert.equal((await api('/categories', { method: 'POST', body: { name: `X ${run}` }, cookie: user })).status, 403)
   assert.equal((await api('/auth/me', { cookie: admin })).json.data.role, 'ADMIN')
+
+  // Daftar user khusus admin, tanpa password/googleId
+  assert.equal((await api('/admin/users', { cookie: user })).status, 403)
+  const users = (await api(`/admin/users?search=user-${run}`, { cookie: admin })).json.data
+  assert.deepEqual(users.map((u) => u.email), [`user-${run}@tes.local`])
+  assert.ok(!('password' in users[0]) && !('googleId' in users[0]))
 })
 
 test('katalog: kategori, upload, produk, warna, filter', async () => {
@@ -116,6 +122,10 @@ test('katalog: kategori, upload, produk, warna, filter', async () => {
   assert.equal((await api(`/products/${a.json.data.slug}`)).json.data.colors.length, 2)
   assert.equal((await api(`/admin/products/${idA}`, { cookie: admin })).status, 200)
 
+  // Edit tanpa imageUrls ditolak, supaya foto tidak terhapus tanpa sengaja
+  assert.equal((await api(`/products/${idA}`, { method: 'PUT', cookie: admin, body: { ...dasar, price: 90000 } })).status, 400)
+  assert.equal((await fetch(imageUrl)).status, 200, 'foto masih ada')
+
   // Edit: harga naik, foto dibuang → file di Directus ikut terhapus, slug tetap
   const edit = await api(`/products/${idA}`, { method: 'PUT', cookie: admin, body: { ...dasar, price: 90000, imageUrls: [] } })
   assert.equal(edit.json.data.price, 90000)
@@ -172,6 +182,14 @@ test('blog: draft tidak bocor, publish, isi dibersihkan', async () => {
   assert.ok(terbit.json.data.publishedAt)
   assert.deepEqual(await publik(), [id])
   assert.equal((await api(`/posts/${slug}`)).status, 200)
+
+  // Edit tanpa field published → tetap terbit dengan tanggal terbit yang sama (tidak jadi draft)
+  const edit = await api(`/posts/${id}`, {
+    method: 'PUT',
+    cookie: admin,
+    body: { title: `Cara Merawat Kain ${run}`, content: '<p>Edit</p>', postCategoryId },
+  })
+  assert.equal(edit.json.data.publishedAt, terbit.json.data.publishedAt)
 
   assert.equal((await api(`/post-categories/${postCategoryId}`, { method: 'DELETE', cookie: admin })).status, 409)
   assert.equal((await api(`/posts/${id}`, { method: 'DELETE', cookie: admin })).status, 200)

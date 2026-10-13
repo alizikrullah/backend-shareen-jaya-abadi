@@ -6,7 +6,7 @@ import { getCart } from '../cart/cart.service.js'
 import { getOwned } from '../addresses/addresses.service.js'
 
 const ORDER_STATUSES = ['PENDING', 'PROCESSING', 'SHIPPED', 'COMPLETED', 'CANCELLED']
-const PENDING_LIMIT_MS = 24 * 60 * 60 * 1000 // samakan dengan expiry Snap Midtrans
+export const PENDING_LIMIT_MS = 24 * 60 * 60 * 1000 // batas bayar; dipakai juga untuk expiry Snap Midtrans
 
 const include = { items: true, payment: { select: { status: true, method: true, paidAt: true } } }
 const adminInclude = { ...include, user: { select: { id: true, name: true, email: true } } }

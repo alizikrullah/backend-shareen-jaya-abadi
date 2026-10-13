@@ -2,11 +2,15 @@ import crypto from 'node:crypto'
 import { prisma } from '../../shared/prisma.js'
 import { env } from '../../shared/config/env.js'
 import { HttpError } from '../../shared/utils/httpError.js'
-import { cancelPendingOrder } from '../orders/orders.service.js'
+import { cancelPendingOrder, PENDING_LIMIT_MS } from '../orders/orders.service.js'
 
 const SNAP_URL = env.midtrans.isProduction
   ? 'https://app.midtrans.com/snap/v1/transactions'
   : 'https://app.sandbox.midtrans.com/snap/v1/transactions'
+
+// Format waktu Midtrans dalam WIB: "2026-10-13 15:07:00 +0700"
+const toMidtransTime = (date) =>
+  `${new Date(date.getTime() + 7 * 60 * 60 * 1000).toISOString().replace('T', ' ').slice(0, 19)} +0700`
 
 function requireServerKey() {
   if (!env.midtrans.serverKey) throw new HttpError(503, 'Pembayaran belum dikonfigurasi')
@@ -41,7 +45,9 @@ export async function createToken(userId, orderId) {
         { id: 'ONGKIR', name: `Ongkir ${order.courier.toUpperCase()} ${order.courierService}`.slice(0, 50), price: order.shippingCost, quantity: 1 },
       ],
       customer_details: { first_name: order.user.name, email: order.user.email, phone: order.shippingAddress.phone },
-      expiry: { unit: 'hours', duration: 24 },
+      // Batas bayar dihitung dari waktu ORDER dibuat (bukan saat token dibuat), sama persis dengan auto-cancel.
+      // Kalau tidak, user bisa membayar order yang sudah dibatalkan otomatis.
+      expiry: { start_time: toMidtransTime(order.createdAt), unit: 'minute', duration: PENDING_LIMIT_MS / 60_000 },
     }),
   })
   const body = await res.json().catch(() => ({}))

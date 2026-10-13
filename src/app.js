@@ -15,11 +15,13 @@ import { shippingRoutes } from './features/shipping/shipping.routes.js'
 import { cartRoutes } from './features/cart/cart.routes.js'
 import { ordersRoutes } from './features/orders/orders.routes.js'
 import { paymentRoutes } from './features/payment/payment.routes.js'
+import { usersRoutes } from './features/users/users.routes.js'
 import { notFound, errorHandler } from './shared/middlewares/errorHandler.js'
 
 z.config(z.locales.id()) // pesan validasi bawaan Zod dalam Bahasa Indonesia
 
 export const app = express()
+app.disable('x-powered-by') // jangan umumkan "Express" di header response
 
 // ponytail: percaya 1 proxy (Traefik di Coolify) supaya IP asli & cookie secure terbaca benar.
 // Naikkan angkanya kalau nanti BE ada di belakang lebih dari satu proxy.
@@ -32,7 +34,7 @@ app.use(passport.initialize())
 
 app.use('/api/auth', authRoutes)
 app.use('/api', categoriesRoutes, productsRoutes, blogRoutes, uploadsRoutes)
-app.use('/api', addressesRoutes, shippingRoutes, cartRoutes, ordersRoutes, paymentRoutes)
+app.use('/api', addressesRoutes, shippingRoutes, cartRoutes, ordersRoutes, paymentRoutes, usersRoutes)
 
 app.use(notFound)
 app.use(errorHandler)
