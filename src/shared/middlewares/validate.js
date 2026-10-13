@@ -1,13 +1,6 @@
-// Validasi req.body dengan skema Zod. Field yang tidak ada di skema dibuang (cegah mass assignment).
+// Validasi + bersihkan req.body dengan skema Zod. Field di luar skema dibuang (cegah mass assignment).
+// Kalau tidak valid, ZodError diteruskan ke errorHandler → 400 dengan daftar error per field.
 export const validate = (schema) => (req, res, next) => {
-  const result = schema.safeParse(req.body ?? {})
-  if (!result.success) {
-    const errors = {}
-    for (const issue of result.error.issues) {
-      errors[issue.path.join('.')] ??= issue.message
-    }
-    return res.status(400).json({ success: false, message: 'Data tidak valid', errors })
-  }
-  req.body = result.data
+  req.body = schema.parse(req.body ?? {})
   next()
 }

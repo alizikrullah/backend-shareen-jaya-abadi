@@ -14,4 +14,8 @@ export const env = {
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.GOOGLE_CALLBACK_URL || `http://localhost:${port}/api/auth/google/callback`,
   },
+  directus: {
+    url: process.env.DIRECTUS_URL?.replace(/\/$/, ''),
+    token: process.env.DIRECTUS_TOKEN,
+  },
 }

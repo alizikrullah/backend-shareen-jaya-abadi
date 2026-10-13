@@ -18,3 +18,6 @@ export function requireAdmin(req, res, next) {
   if (req.user.role !== 'ADMIN') return res.status(403).json({ success: false, message: 'Khusus admin' })
   next()
 }
+
+// Pasang di route admin: router.post('/products', adminOnly, ...)
+export const adminOnly = [authenticateToken, requireAdmin]

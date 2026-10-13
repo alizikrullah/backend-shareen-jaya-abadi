@@ -2,10 +2,17 @@ import express from 'express'
 import cors from 'cors'
 import morgan from 'morgan'
 import cookieParser from 'cookie-parser'
+import { z } from 'zod'
 import { env } from './shared/config/env.js'
 import { passport } from './shared/config/passport.js'
 import { authRoutes } from './features/auth/auth.routes.js'
+import { categoriesRoutes } from './features/categories/categories.routes.js'
+import { productsRoutes } from './features/products/products.routes.js'
+import { blogRoutes } from './features/blog/blog.routes.js'
+import { uploadsRoutes } from './features/uploads/uploads.routes.js'
 import { notFound, errorHandler } from './shared/middlewares/errorHandler.js'
+
+z.config(z.locales.id()) // pesan validasi bawaan Zod dalam Bahasa Indonesia
 
 export const app = express()
 
@@ -14,11 +21,12 @@ export const app = express()
 app.set('trust proxy', 1)
 app.use(cors({ origin: env.frontendUrl, credentials: true }))
 app.use(morgan(env.isProduction ? 'combined' : 'dev'))
-app.use(express.json())
+app.use(express.json({ limit: '1mb' })) // isi artikel blog bisa panjang
 app.use(cookieParser())
 app.use(passport.initialize())
 
 app.use('/api/auth', authRoutes)
+app.use('/api', categoriesRoutes, productsRoutes, blogRoutes, uploadsRoutes)
 
 app.use(notFound)
 app.use(errorHandler)
