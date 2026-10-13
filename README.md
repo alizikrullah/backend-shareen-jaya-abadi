@@ -66,10 +66,11 @@ The tests run against the dev database, Directus, RajaOngkir and the Midtrans sa
 
 ## Deploy to Coolify
 
-1. Create a PostgreSQL database in Coolify (same project) and copy its internal URL.
+1. Database: the API shares the PostgreSQL database of the Directus service. In that service, enable **Connect To Predefined Network** and restart it, then build `DATABASE_URL` from its Postgres credentials: `postgresql://<user>:<password>@<postgres container name>:5432/<database>`.
+   Table names don't clash (Directus tables start with `directus_`) and production only runs `prisma migrate deploy`. **Never** run `prisma migrate dev`, `prisma migrate reset` or `prisma db push` against this database — they can drop the Directus tables.
 2. Add a new resource from this repository with build pack **Dockerfile** and port **3000**.
 3. Set the domain to `http://api-shareen.grivilabs.my.id`. HTTPS is handled by Cloudflare Tunnel, which routes the hostname to `localhost:80`.
-4. Fill in the environment variables with production values: the new `DATABASE_URL`, a new `JWT_SECRET`, `FRONTEND_URL=https://shareenjayaabadi.grivilabs.my.id`, and `GOOGLE_CALLBACK_URL=https://api-shareen.grivilabs.my.id/api/auth/google/callback`.
+4. Fill in the environment variables with production values: `DATABASE_URL` from step 1, a new `JWT_SECRET`, `FRONTEND_URL=https://shareenjayaabadi.grivilabs.my.id`, and `GOOGLE_CALLBACK_URL=https://api-shareen.grivilabs.my.id/api/auth/google/callback`.
 5. Deploy. The container runs `prisma migrate deploy` before the server starts.
 6. Once, in the Coolify terminal: `npx prisma db seed`. Then create the admin account with a strong password.
 7. Google Cloud Console: add the callback URL above as an authorized redirect URI.
