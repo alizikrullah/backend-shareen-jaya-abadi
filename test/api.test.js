@@ -51,6 +51,7 @@ after(async () => {
 })
 
 test('endpoint admin menolak tamu dan user biasa', async () => {
+  assert.equal((await api('/health')).json.data.status, 'ok')
   assert.equal((await api('/categories', { method: 'POST', body: { name: `X ${run}` } })).status, 401)
   assert.equal((await api('/categories', { method: 'POST', body: { name: `X ${run}` }, cookie: user })).status, 403)
   assert.equal((await api('/auth/me', { cookie: admin })).json.data.role, 'ADMIN')

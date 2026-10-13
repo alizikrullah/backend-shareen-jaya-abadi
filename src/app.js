@@ -23,6 +23,9 @@ z.config(z.locales.id()) // pesan validasi bawaan Zod dalam Bahasa Indonesia
 export const app = express()
 app.disable('x-powered-by') // jangan umumkan "Express" di header response
 
+// Health check Docker/Coolify — dipasang sebelum morgan supaya log tidak penuh tiap 30 detik
+app.get('/api/health', (req, res) => res.json({ success: true, data: { status: 'ok' } }))
+
 // ponytail: percaya 1 proxy (Traefik di Coolify) supaya IP asli & cookie secure terbaca benar.
 // Naikkan angkanya kalau nanti BE ada di belakang lebih dari satu proxy.
 app.set('trust proxy', 1)
