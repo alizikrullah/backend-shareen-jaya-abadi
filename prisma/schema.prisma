@@ -1,0 +1,186 @@
+// Schema database Shareen Jaya Abadi — acuan: shareen-prd.md
+
+// ponytail: generator lama "prisma-client-js" dipakai karena hasilnya JavaScript biasa yang bisa
+// langsung di-import di Node 20. Pindah ke generator "prisma-client" saat upgrade ke Prisma 8 + Node 24.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String?  // null jika login via Google
+  googleId  String?  @unique
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  addresses Address[]
+  cartItems CartItem[]
+  orders    Order[]
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model Address {
+  id            String   @id @default(uuid())
+  userId        String
+  label         String   // ex: "Rumah", "Kantor"
+  recipient     String
+  phone         String
+  destinationId String   // ID wilayah RajaOngkir, dipakai untuk hitung ongkir
+  province      String
+  city          String
+  district      String
+  postalCode    String
+  detail        String   // nama jalan, nomor rumah, patokan
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  products Product[]
+}
+
+model Product {
+  id             String   @id @default(uuid())
+  name           String
+  slug           String   @unique
+  sku            String   @unique
+  description    String?
+  price          Int      // Rupiah per meter
+  weightPerMeter Int      // gram per meter, untuk hitung ongkir
+  imageUrls      String[] // URL gambar di Directus
+  categoryId     String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  category   Category       @relation(fields: [categoryId], references: [id]) // Restrict: kategori yang masih dipakai tidak bisa dihapus
+  colors     ProductColor[] // minimal satu; stok produk = jumlah stok semua warnanya (dihitung, tidak disimpan)
+  orderItems OrderItem[]
+}
+
+model ProductColor {
+  id        String  @id @default(uuid())
+  productId String
+  name      String  // ex: "Merah Marun"
+  hexCode   String? // ex: "#800000"
+  stock     Int     @default(0) // dalam meter
+
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  cartItems  CartItem[]
+  orderItems OrderItem[]
+}
+
+model CartItem {
+  id       String @id @default(uuid())
+  userId   String
+  colorId  String // varian warna yang dipilih — produknya ikut dari warna ini
+  quantity Int    // dalam meter
+
+  user  User         @relation(fields: [userId], references: [id])
+  color ProductColor @relation(fields: [colorId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, colorId]) // satu baris per warna per user
+}
+
+model Order {
+  id              String      @id @default(uuid()) // dipakai juga sebagai order_id di Midtrans
+  userId          String
+  shippingAddress Json        // snapshot alamat saat checkout
+  courier         String      // ex: "jne"
+  courierService  String      // ex: "REG"
+  shippingCost    Int
+  subtotal        Int
+  totalAmount     Int         // subtotal + shippingCost
+  trackingNumber  String?     // nomor resi, wajib diisi saat SHIPPED
+  status          OrderStatus @default(PENDING)
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user    User        @relation(fields: [userId], references: [id])
+  items   OrderItem[]
+  payment Payment?
+}
+
+enum OrderStatus {
+  PENDING
+  PROCESSING
+  SHIPPED
+  COMPLETED
+  CANCELLED
+}
+
+model OrderItem {
+  id          String  @id @default(uuid())
+  orderId     String
+  productId   String? // jadi null kalau produknya dihapus, riwayat tetap aman lewat snapshot
+  colorId     String? // jadi null kalau warnanya dihapus; dipakai untuk mengembalikan stok saat order batal
+  productName String  // snapshot
+  sku         String  // snapshot
+  colorName   String  // snapshot
+  quantity    Int     // dalam meter
+  price       Int     // snapshot harga per meter saat order
+
+  order   Order         @relation(fields: [orderId], references: [id])
+  product Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+  color   ProductColor? @relation(fields: [colorId], references: [id], onDelete: SetNull)
+}
+
+model Payment {
+  id        String        @id @default(uuid())
+  orderId   String        @unique
+  snapToken String?       // dipakai ulang untuk "bayar ulang" selama belum expired
+  status    PaymentStatus @default(UNPAID)
+  method    String?       // ex: "bank_transfer", "gopay"
+  paidAt    DateTime?
+  createdAt DateTime      @default(now())
+
+  order Order @relation(fields: [orderId], references: [id])
+}
+
+enum PaymentStatus {
+  UNPAID
+  PAID
+  FAILED
+  REFUNDED
+}
+
+model PostCategory {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  slug      String   @unique
+  createdAt DateTime @default(now())
+
+  posts Post[]
+}
+
+model Post {
+  id             String    @id @default(uuid())
+  title          String
+  slug           String    @unique
+  content        String    // HTML dari editor, wajib di-sanitize sebelum dirender
+  excerpt        String?
+  thumbnailUrl   String?   // URL gambar di Directus
+  postCategoryId String
+  publishedAt    DateTime? // null = draft
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  postCategory PostCategory @relation(fields: [postCategoryId], references: [id]) // Restrict: kategori yang masih dipakai tidak bisa dihapus
+}
