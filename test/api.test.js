@@ -250,6 +250,7 @@ test('transaksi: alamat, cart, ongkir, checkout, status order', async () => {
   assert.equal(order.json.data.totalAmount, 250000 + ongkir[0].cost)
   assert.equal(order.json.data.items.length, 2)
   assert.equal(order.json.data.shippingAddress.recipient, 'Budi Tes')
+  assert.equal(order.json.data.items[0].product.slug, `kain-checkout-${run}`)
   assert.equal((await api('/cart', { cookie: user })).json.data.items.length, 0, 'cart kosong setelah checkout')
   assert.deepEqual([await stok(merah.id), await stok(biru.id)], [1, 2], 'stok berkurang')
   assert.equal((await api('/orders', { method: 'POST', cookie: user, body: checkout })).status, 400, 'cart kosong')
@@ -289,6 +290,12 @@ test('pembayaran Midtrans', { skip: !process.env.MIDTRANS_SERVER_KEY && 'MIDTRAN
   assert.equal(token.status, 200, JSON.stringify(token.json))
   assert.equal((await api('/payment/token', { method: 'POST', cookie: user, body: { orderId: order.id } })).json.data.token, token.json.data.token)
 
+  // Cek status ke API Midtrans: belum pilih metode bayar → transaksi belum ada → tetap PENDING
+  const cek = await api('/payment/status', { method: 'POST', cookie: user, body: { orderId: order.id } })
+  assert.equal(cek.status, 200, JSON.stringify(cek.json))
+  assert.equal(cek.json.data.status, 'PENDING')
+  assert.equal((await api('/payment/status', { method: 'POST', cookie: admin, body: { orderId: order.id } })).status, 404, 'order orang lain')
+
   // Webhook: signature palsu ditolak, settlement → PROCESSING, notifikasi dobel tetap aman
   const notif = (transaction_status) => {
     const body = { order_id: order.id, status_code: '200', gross_amount: `${order.totalAmount}.00`, transaction_status, payment_type: 'bank_transfer' }
@@ -302,6 +309,7 @@ test('pembayaran Midtrans', { skip: !process.env.MIDTRANS_SERVER_KEY && 'MIDTRAN
   const lunas = (await api(`/orders/${order.id}`, { cookie: user })).json.data
   assert.equal(lunas.status, 'PROCESSING')
   assert.equal(lunas.payment.status, 'PAID')
+  assert.equal((await api('/payment/status', { method: 'POST', cookie: user, body: { orderId: order.id } })).json.data.status, 'PROCESSING')
 
   // Admin: kirim wajib resi, lalu selesai
   const statusUrl = `/admin/orders/${order.id}/status`

@@ -8,7 +8,11 @@ import { getOwned } from '../addresses/addresses.service.js'
 const ORDER_STATUSES = ['PENDING', 'PROCESSING', 'SHIPPED', 'COMPLETED', 'CANCELLED']
 export const PENDING_LIMIT_MS = 24 * 60 * 60 * 1000 // batas bayar; dipakai juga untuk expiry Snap Midtrans
 
-const include = { items: true, payment: { select: { status: true, method: true, paidAt: true } } }
+// Item ikut membawa slug & foto produk untuk halaman riwayat order (null kalau produknya sudah dihapus)
+const include = {
+  items: { include: { product: { select: { slug: true, imageUrls: true } } } },
+  payment: { select: { status: true, method: true, paidAt: true } },
+}
 const adminInclude = { ...include, user: { select: { id: true, name: true, email: true } } }
 
 // Transisi yang boleh dilakukan admin (lihat "Alur Status Order" di PRD)
