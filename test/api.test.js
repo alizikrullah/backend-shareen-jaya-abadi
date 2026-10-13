@@ -1,8 +1,10 @@
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import { app } from '../src/app.js'
 import { prisma } from '../src/shared/prisma.js'
+import { cancelExpiredOrders } from '../src/features/orders/orders.service.js'
 
 // Tes end-to-end ke database dev + Directus asli: `npm test`.
 // Semua data tes diberi penanda `run` lalu dihapus di akhir.
@@ -33,11 +35,17 @@ const admin = await login(`admin-${run}@tes.local`)
 const user = await login(`user-${run}@tes.local`)
 
 after(async () => {
+  const testUsers = { email: { endsWith: `${run}@tes.local` } }
+  await prisma.payment.deleteMany({ where: { order: { user: testUsers } } })
+  await prisma.orderItem.deleteMany({ where: { order: { user: testUsers } } })
+  await prisma.order.deleteMany({ where: { user: testUsers } })
+  await prisma.cartItem.deleteMany({ where: { user: testUsers } })
+  await prisma.address.deleteMany({ where: { user: testUsers } })
   await prisma.post.deleteMany({ where: { title: { endsWith: run } } })
   await prisma.postCategory.deleteMany({ where: { name: { endsWith: run } } })
   await prisma.product.deleteMany({ where: { name: { endsWith: run } } })
   await prisma.category.deleteMany({ where: { name: { endsWith: run } } })
-  await prisma.user.deleteMany({ where: { email: { endsWith: `${run}@tes.local` } } })
+  await prisma.user.deleteMany({ where: testUsers })
   await prisma.$disconnect()
   server.close()
 })
@@ -168,4 +176,119 @@ test('blog: draft tidak bocor, publish, isi dibersihkan', async () => {
   assert.equal((await api(`/post-categories/${postCategoryId}`, { method: 'DELETE', cookie: admin })).status, 409)
   assert.equal((await api(`/posts/${id}`, { method: 'DELETE', cookie: admin })).status, 200)
   assert.equal((await api(`/post-categories/${postCategoryId}`, { method: 'DELETE', cookie: admin })).status, 200)
+})
+
+test('transaksi: alamat, cart, ongkir, checkout, status order', async () => {
+  // Produk tes: 2 warna (stok 5 & 3 meter), Rp50.000/m, 300 gram/m
+  const kategori = await prisma.category.create({ data: { name: `Checkout ${run}`, slug: `checkout-${run}` } })
+  const produk = await prisma.product.create({
+    data: {
+      name: `Kain Checkout ${run}`,
+      slug: `kain-checkout-${run}`,
+      sku: `TES-${run}-C`.toUpperCase(),
+      price: 50000,
+      weightPerMeter: 300,
+      categoryId: kategori.id,
+      colors: { create: [{ name: 'Merah', stock: 5 }, { name: 'Biru', stock: 3 }] },
+    },
+    include: { colors: { orderBy: { name: 'asc' } } },
+  })
+  const [biru, merah] = produk.colors
+  const stok = async (id) => (await prisma.productColor.findUnique({ where: { id } })).stock
+
+  // Alamat: wilayah dari RajaOngkir, alamat pertama otomatis default
+  const wilayah = await api('/shipping/destinations?search=gambir', { cookie: user })
+  assert.ok(wilayah.json.data.length > 0)
+  const { label: _, ...area } = wilayah.json.data[0]
+  const alamatDasar = { recipient: 'Budi Tes', phone: '081234567890', detail: 'Jl. Tes No. 1', ...area }
+  const rumah = await api('/addresses', { method: 'POST', cookie: user, body: { ...alamatDasar, label: 'Rumah' } })
+  assert.equal(rumah.status, 201)
+  assert.equal(rumah.json.data.isDefault, true)
+  const kantor = await api('/addresses', { method: 'POST', cookie: user, body: { ...alamatDasar, label: 'Kantor', isDefault: true } })
+  const daftar = (await api('/addresses', { cookie: user })).json.data
+  assert.deepEqual(daftar.map((a) => [a.label, a.isDefault]), [['Kantor', true], ['Rumah', false]])
+  assert.equal((await api(`/addresses/${rumah.json.data.id}`, { method: 'DELETE', cookie: admin })).status, 404, 'alamat orang lain')
+  assert.equal((await api('/addresses', { method: 'POST', cookie: user, body: { ...alamatDasar, label: 'X', phone: '123' } })).status, 400)
+
+  // Cart: warna sama digabung, stok dicek
+  assert.equal((await api('/cart', { method: 'POST', cookie: user, body: { colorId: merah.id, quantity: 2 } })).status, 201)
+  const gabung = (await api('/cart', { method: 'POST', cookie: user, body: { colorId: merah.id, quantity: 2 } })).json.data
+  assert.deepEqual(gabung.items.map((i) => i.quantity), [4])
+  assert.equal((await api('/cart', { method: 'POST', cookie: user, body: { colorId: merah.id, quantity: 2 } })).status, 400, 'melebihi stok')
+  const keranjang = (await api('/cart', { method: 'POST', cookie: user, body: { colorId: biru.id, quantity: 1 } })).json.data
+  assert.equal(keranjang.subtotal, 250000)
+  assert.equal(keranjang.totalWeight, 1500)
+  const itemBiru = keranjang.items.find((i) => i.colorId === biru.id)
+  assert.equal((await api(`/cart/${itemBiru.id}`, { method: 'PUT', cookie: user, body: { quantity: 10 } })).status, 400)
+  assert.equal((await api(`/cart/${itemBiru.id}`, { method: 'PUT', cookie: admin, body: { quantity: 1 } })).status, 404, 'cart orang lain')
+
+  // Ongkir dihitung server, checkout pakai layanan termurah
+  const ongkir = (await api('/shipping/cost', { method: 'POST', cookie: user, body: { addressId: kantor.json.data.id } })).json.data
+  assert.ok(ongkir.length > 0)
+  const checkout = { addressId: kantor.json.data.id, courier: ongkir[0].courier, service: ongkir[0].service }
+  assert.equal((await api('/orders', { method: 'POST', cookie: user, body: { ...checkout, service: 'NGASAL' } })).status, 400)
+  const order = await api('/orders', { method: 'POST', cookie: user, body: checkout })
+  assert.equal(order.status, 201, JSON.stringify(order.json))
+  assert.equal(order.json.data.totalAmount, 250000 + ongkir[0].cost)
+  assert.equal(order.json.data.items.length, 2)
+  assert.equal(order.json.data.shippingAddress.recipient, 'Budi Tes')
+  assert.equal((await api('/cart', { cookie: user })).json.data.items.length, 0, 'cart kosong setelah checkout')
+  assert.deepEqual([await stok(merah.id), await stok(biru.id)], [1, 2], 'stok berkurang')
+  assert.equal((await api('/orders', { method: 'POST', cookie: user, body: checkout })).status, 400, 'cart kosong')
+
+  // Akses order
+  const orderId = order.json.data.id
+  assert.equal((await api(`/orders/${orderId}`, { cookie: user })).status, 200)
+  assert.equal((await api(`/orders/${orderId}`, { cookie: admin })).status, 404, 'order orang lain')
+  assert.equal((await api(`/admin/orders/${orderId}`, { cookie: admin })).json.data.user.email, `user-${run}@tes.local`)
+  assert.equal((await api('/admin/stats', { cookie: admin })).status, 200)
+
+  // Admin: transisi salah ditolak, batal → stok kembali
+  const statusUrl = `/admin/orders/${orderId}/status`
+  assert.equal((await api(statusUrl, { method: 'PATCH', cookie: admin, body: { status: 'SHIPPED', trackingNumber: 'RESI123' } })).status, 400)
+  assert.equal((await api(statusUrl, { method: 'PATCH', cookie: admin, body: { status: 'CANCELLED' } })).json.data.status, 'CANCELLED')
+  assert.deepEqual([await stok(merah.id), await stok(biru.id)], [5, 3], 'stok kembali setelah batal')
+
+  // Auto-cancel: order PENDING yang lewat 24 jam
+  await api('/cart', { method: 'POST', cookie: user, body: { colorId: merah.id, quantity: 1 } })
+  const lama = (await api('/orders', { method: 'POST', cookie: user, body: checkout })).json.data
+  await prisma.order.update({ where: { id: lama.id }, data: { createdAt: new Date(Date.now() - 25 * 60 * 60 * 1000) } })
+  assert.ok((await cancelExpiredOrders()) >= 1)
+  assert.equal((await api(`/orders/${lama.id}`, { cookie: user })).json.data.status, 'CANCELLED')
+  assert.equal(await stok(merah.id), 5)
+})
+
+test('pembayaran Midtrans', { skip: !process.env.MIDTRANS_SERVER_KEY && 'MIDTRANS_SERVER_KEY belum diisi' }, async () => {
+  const warna = await prisma.productColor.findFirst({ where: { name: 'Merah', product: { name: `Kain Checkout ${run}` } } })
+  const alamat = (await api('/addresses', { cookie: user })).json.data[0]
+  await api('/cart', { method: 'POST', cookie: user, body: { colorId: warna.id, quantity: 2 } })
+  const [termurah] = (await api('/shipping/cost', { method: 'POST', cookie: user, body: { addressId: alamat.id } })).json.data
+  const checkout = { addressId: alamat.id, courier: termurah.courier, service: termurah.service }
+  const order = (await api('/orders', { method: 'POST', cookie: user, body: checkout })).json.data
+
+  // Snap token dibuat sekali lalu dipakai ulang ("bayar ulang")
+  const token = await api('/payment/token', { method: 'POST', cookie: user, body: { orderId: order.id } })
+  assert.equal(token.status, 200, JSON.stringify(token.json))
+  assert.equal((await api('/payment/token', { method: 'POST', cookie: user, body: { orderId: order.id } })).json.data.token, token.json.data.token)
+
+  // Webhook: signature palsu ditolak, settlement → PROCESSING, notifikasi dobel tetap aman
+  const notif = (transaction_status) => {
+    const body = { order_id: order.id, status_code: '200', gross_amount: `${order.totalAmount}.00`, transaction_status, payment_type: 'bank_transfer' }
+    body.signature_key = createHash('sha512')
+      .update(body.order_id + body.status_code + body.gross_amount + process.env.MIDTRANS_SERVER_KEY)
+      .digest('hex')
+    return body
+  }
+  assert.equal((await api('/payment/notification', { method: 'POST', body: { ...notif('settlement'), signature_key: 'palsu' } })).status, 403)
+  for (const _ of [1, 2]) assert.equal((await api('/payment/notification', { method: 'POST', body: notif('settlement') })).status, 200)
+  const lunas = (await api(`/orders/${order.id}`, { cookie: user })).json.data
+  assert.equal(lunas.status, 'PROCESSING')
+  assert.equal(lunas.payment.status, 'PAID')
+
+  // Admin: kirim wajib resi, lalu selesai
+  const statusUrl = `/admin/orders/${order.id}/status`
+  assert.equal((await api(statusUrl, { method: 'PATCH', cookie: admin, body: { status: 'SHIPPED' } })).status, 400)
+  const dikirim = await api(statusUrl, { method: 'PATCH', cookie: admin, body: { status: 'SHIPPED', trackingNumber: 'JNE123456' } })
+  assert.equal(dikirim.json.data.trackingNumber, 'JNE123456')
+  assert.equal((await api(statusUrl, { method: 'PATCH', cookie: admin, body: { status: 'COMPLETED' } })).json.data.status, 'COMPLETED')
 })

@@ -39,7 +39,8 @@ model Address {
   destinationId String   // ID wilayah RajaOngkir, dipakai untuk hitung ongkir
   province      String
   city          String
-  district      String
+  district      String   // kecamatan
+  subdistrict   String   // kelurahan
   postalCode    String
   detail        String   // nama jalan, nomor rumah, patokan
   isDefault     Boolean  @default(false)
@@ -90,8 +91,9 @@ model ProductColor {
 model CartItem {
   id       String @id @default(uuid())
   userId   String
-  colorId  String // varian warna yang dipilih — produknya ikut dari warna ini
-  quantity Int    // dalam meter
+  colorId   String   // varian warna yang dipilih — produknya ikut dari warna ini
+  quantity  Int      // dalam meter
+  createdAt DateTime @default(now())
 
   user  User         @relation(fields: [userId], references: [id])
   color ProductColor @relation(fields: [colorId], references: [id], onDelete: Cascade)

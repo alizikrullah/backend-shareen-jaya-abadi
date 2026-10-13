@@ -18,4 +18,12 @@ export const env = {
     url: process.env.DIRECTUS_URL?.replace(/\/$/, ''),
     token: process.env.DIRECTUS_TOKEN,
   },
+  rajaongkir: {
+    apiKey: process.env.RAJAONGKIR_API_KEY,
+    originId: process.env.RAJAONGKIR_ORIGIN_ID,
+  },
+  midtrans: {
+    serverKey: process.env.MIDTRANS_SERVER_KEY,
+    isProduction: process.env.MIDTRANS_IS_PRODUCTION === 'true',
+  },
 }

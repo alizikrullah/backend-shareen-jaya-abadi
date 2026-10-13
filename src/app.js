@@ -10,6 +10,11 @@ import { categoriesRoutes } from './features/categories/categories.routes.js'
 import { productsRoutes } from './features/products/products.routes.js'
 import { blogRoutes } from './features/blog/blog.routes.js'
 import { uploadsRoutes } from './features/uploads/uploads.routes.js'
+import { addressesRoutes } from './features/addresses/addresses.routes.js'
+import { shippingRoutes } from './features/shipping/shipping.routes.js'
+import { cartRoutes } from './features/cart/cart.routes.js'
+import { ordersRoutes } from './features/orders/orders.routes.js'
+import { paymentRoutes } from './features/payment/payment.routes.js'
 import { notFound, errorHandler } from './shared/middlewares/errorHandler.js'
 
 z.config(z.locales.id()) // pesan validasi bawaan Zod dalam Bahasa Indonesia
@@ -27,6 +32,7 @@ app.use(passport.initialize())
 
 app.use('/api/auth', authRoutes)
 app.use('/api', categoriesRoutes, productsRoutes, blogRoutes, uploadsRoutes)
+app.use('/api', addressesRoutes, shippingRoutes, cartRoutes, ordersRoutes, paymentRoutes)
 
 app.use(notFound)
 app.use(errorHandler)

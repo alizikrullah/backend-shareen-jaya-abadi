@@ -1,0 +1,102 @@
+import crypto from 'node:crypto'
+import { prisma } from '../../shared/prisma.js'
+import { env } from '../../shared/config/env.js'
+import { HttpError } from '../../shared/utils/httpError.js'
+import { cancelPendingOrder } from '../orders/orders.service.js'
+
+const SNAP_URL = env.midtrans.isProduction
+  ? 'https://app.midtrans.com/snap/v1/transactions'
+  : 'https://app.sandbox.midtrans.com/snap/v1/transactions'
+
+function requireServerKey() {
+  if (!env.midtrans.serverKey) throw new HttpError(503, 'Pembayaran belum dikonfigurasi')
+  return env.midtrans.serverKey
+}
+
+export async function createToken(userId, orderId) {
+  const order = await prisma.order.findFirst({ where: { id: orderId, userId }, include: { items: true, payment: true, user: true } })
+  if (!order) throw new HttpError(404, 'Order tidak ditemukan')
+  if (order.status !== 'PENDING') throw new HttpError(400, 'Order ini tidak sedang menunggu pembayaran')
+
+  // Token Snap berlaku sampai order expired (24 jam) — dipakai ulang untuk "bayar ulang"
+  if (order.payment?.snapToken) return { token: order.payment.snapToken }
+
+  const res = await fetch(SNAP_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Basic ${Buffer.from(`${requireServerKey()}:`).toString('base64')}`,
+    },
+    body: JSON.stringify({
+      transaction_details: { order_id: order.id, gross_amount: order.totalAmount },
+      // Total item_details wajib sama dengan gross_amount, jadi ongkir ikut jadi satu baris
+      item_details: [
+        ...order.items.map((item) => ({
+          id: item.sku,
+          name: `${item.productName} - ${item.colorName}`.slice(0, 50),
+          price: item.price,
+          quantity: item.quantity,
+        })),
+        { id: 'ONGKIR', name: `Ongkir ${order.courier.toUpperCase()} ${order.courierService}`.slice(0, 50), price: order.shippingCost, quantity: 1 },
+      ],
+      customer_details: { first_name: order.user.name, email: order.user.email, phone: order.shippingAddress.phone },
+      expiry: { unit: 'hours', duration: 24 },
+    }),
+  })
+  const body = await res.json().catch(() => ({}))
+  if (!res.ok) {
+    console.error('Midtrans Snap gagal:', res.status, body)
+    throw new HttpError(502, 'Gagal membuat pembayaran, coba lagi')
+  }
+
+  await prisma.payment.upsert({
+    where: { orderId: order.id },
+    create: { orderId: order.id, snapToken: body.token },
+    update: { snapToken: body.token },
+  })
+  return { token: body.token }
+}
+
+function isValidSignature({ order_id, status_code, gross_amount, signature_key }) {
+  const expected = crypto
+    .createHash('sha512')
+    .update(`${order_id}${status_code}${gross_amount}${requireServerKey()}`)
+    .digest('hex')
+  return (
+    typeof signature_key === 'string' &&
+    signature_key.length === expected.length &&
+    crypto.timingSafeEqual(Buffer.from(signature_key), Buffer.from(expected))
+  )
+}
+
+// Webhook Midtrans. Status → aksi mengikuti "Alur Status Order" di PRD. Idempotent: notifikasi dobel tidak mengubah apa-apa.
+export async function handleNotification(notification) {
+  if (!isValidSignature(notification)) throw new HttpError(403, 'Signature tidak valid')
+
+  const { order_id: orderId, gross_amount: grossAmount, transaction_status: status, fraud_status: fraud, payment_type: method } = notification
+  const order = await prisma.order.findUnique({ where: { id: orderId } })
+  if (!order) throw new HttpError(404, 'Order tidak ditemukan')
+  if (Number(grossAmount) !== order.totalAmount) throw new HttpError(400, 'Nominal pembayaran tidak cocok')
+
+  if (status === 'settlement' || (status === 'capture' && fraud === 'accept')) {
+    await prisma.$transaction(async (tx) => {
+      const { count } = await tx.order.updateMany({ where: { id: orderId, status: 'PENDING' }, data: { status: 'PROCESSING' } })
+      if (!count) {
+        if (order.status === 'CANCELLED') console.error(`Pembayaran masuk untuk order ${orderId} yang sudah batal — perlu refund manual`)
+        return
+      }
+      const paid = { status: 'PAID', method, paidAt: new Date() }
+      await tx.payment.upsert({ where: { orderId }, create: { orderId, ...paid }, update: paid })
+    })
+  } else if (['cancel', 'deny', 'expire'].includes(status)) {
+    await prisma.$transaction((tx) => cancelPendingOrder(tx, orderId))
+  } else if (status === 'refund' || status === 'partial_refund') {
+    // Refund dilakukan dari dashboard Midtrans; stok tidak dikembalikan otomatis
+    await prisma.$transaction([
+      prisma.order.update({ where: { id: orderId }, data: { status: 'CANCELLED' } }),
+      prisma.payment.updateMany({ where: { orderId }, data: { status: 'REFUNDED' } }),
+    ])
+  }
+  // Status lain (pending, capture + challenge) → tunggu notifikasi berikutnya
+}
